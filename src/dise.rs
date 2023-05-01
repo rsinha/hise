@@ -1,0 +1,217 @@
+use bls12_381::{pairing, G1Projective, G2Projective, Scalar};
+use pairing::group::{
+    prime::{PrimeCurve, PrimeCurveAffine, PrimeGroup},
+    Curve, Group, GroupEncoding, UncompressedEncoding,
+};
+use ff::*;
+use rand::{thread_rng};
+use std::collections::{BTreeMap};
+use std::ops::{Add, Mul, Neg};
+
+use crate::polynomial::*;
+use crate::utils;
+use crate::universe::*;
+use crate::common::sig_utils;
+use crate::{XCoord, UniverseId, PartyId, Weight, PartyPublicKey, AddressBook};
+
+
+pub struct DiseNizkProof {
+    pub ut1: G1Projective,
+    pub ut2: G1Projective,
+    pub αz1: Scalar,
+    pub αz2: Scalar,
+}
+
+pub struct DiseNizkProofParams {
+    pub g: G1Projective,
+    pub h: G1Projective
+}
+
+pub struct DiseNizkStatement {
+    pub g: G1Projective,
+    pub h: G1Projective,
+    pub h_of_x: G1Projective, //H(x)
+    pub h_of_x_pow_a: G1Projective, //H(x)^s 
+    pub com: G1Projective, //ped com g^a. h^b
+}
+
+pub struct DiseNizkWitness {
+    pub α1: Scalar,
+    pub α2: Scalar,
+}
+
+impl <'a> DiseNizkProofParams {
+    pub fn new() -> DiseNizkProofParams {
+        let mut rng = thread_rng();
+        let g = G1Projective::generator();
+        loop {
+            let r = Scalar::random(&mut rng);
+            //avoid degenerate points
+            if r == Scalar::from(0 as u64) {
+                continue;
+            }
+            let h = g.mul(&r);
+            return DiseNizkProofParams { g, h };
+        }
+    }
+}
+
+
+impl <'a> DiseNizkProof {
+
+    fn random_oracle(
+        ut1: &G1Projective, 
+        ut2: &G1Projective
+    ) -> Scalar {
+        let mut bytes = vec![];
+    
+        bytes.extend_from_slice(&ut1.to_bytes().as_ref());
+        bytes.extend_from_slice(&ut2.to_bytes().as_ref());
+    
+        utils::hash_to_scalar(&bytes)
+    }
+
+    // exists α1, α2 s.t. \phi(α1,α2) = true
+    // \phi(x1, x2) := { com = g^{α1}.h^{α2} ∧ prfEval = H(x)^{α1} }
+    pub fn prove(
+        witness: &DiseNizkWitness,
+        stmt: &DiseNizkStatement
+    ) -> DiseNizkProof {
+        let mut rng = thread_rng();
+        let αt1 = Scalar::random(&mut rng);
+        let αt2 = Scalar::random(&mut rng);
+
+        let ut1 = stmt.h_of_x.mul(αt1);
+        let ut2 = stmt.g.mul(αt1).add(stmt.h.mul(αt2));
+
+        //TODO: this needs more inputs
+        let c = DiseNizkProof::random_oracle(
+            &ut1, &ut2);
+
+        let αz1 = αt1 + c * witness.α1;
+        let αz2 = αt2 + c * witness.α2;
+
+        DiseNizkProof { ut1, ut2, αz1, αz2 }
+    }
+
+    pub fn verify(
+        stmt: &DiseNizkStatement,
+        proof: &DiseNizkProof,
+    ) -> bool {
+        let c = DiseNizkProof::random_oracle(
+            &proof.ut1, &proof.ut2);
+        
+        let lhs1 = stmt.h_of_x.mul(&proof.αz1);
+        let rhs1 = proof.ut1.add(stmt.h_of_x_pow_a.mul(&c));
+
+        let lhs2 = stmt.g.mul(&proof.αz1).add(stmt.h.mul(&proof.αz2));
+        let rhs2 = proof.ut2.add(stmt.com.mul(&c));
+
+        return lhs1 == rhs1 && lhs2 == rhs2;
+    }
+}
+
+pub struct Dise { }
+
+impl Dise {
+    pub fn setup(n: usize, t: usize) -> 
+    (DiseNizkProofParams, Vec<DiseNizkWitness>) {
+        let mut rng = rand::thread_rng();
+
+        let pp = DiseNizkProofParams::new();
+
+        let p1 = sig_utils::sample_random_poly(&mut rng, t - 1);
+        let p2 = sig_utils::sample_random_poly(&mut rng, t - 1);
+
+        let mut private_keys = vec![];
+        for i in 1..=n {
+            let x = Scalar::from(i as u64);
+            let α1_i = p1.eval(&x);
+            let α2_i = p2.eval(&x);
+
+            let witness = DiseNizkWitness { 
+                α1: p1.eval(&x),
+                α2: p2.eval(&x)
+            };
+            private_keys.push(witness);
+        }
+        (pp, private_keys)
+    }
+
+    fn get_random_data_commitment() -> [u8; 32] {
+        use rand::prelude::*;
+        let mut rng = rand::thread_rng();
+        let mut array = [0u8; 32];
+        rng.fill(&mut array);
+        array
+    }
+
+    pub fn encrypt_server(
+        pp: &DiseNizkProofParams, 
+        key: &DiseNizkWitness) -> (DiseNizkStatement, DiseNizkProof) {
+
+        let γ = Dise::get_random_data_commitment();
+        let h_of_γ = utils::hash_to_g1(&γ);
+        let h_of_γ_pow_α1 = h_of_γ.mul(key.α1);
+        let com = utils::pedersen_commit_in_g1(&pp.g, &pp.h, &key.α1, &key.α2);
+        let stmt = DiseNizkStatement {
+            g: pp.g.clone(),
+            h: pp.h.clone(),
+            h_of_x: h_of_γ,
+            h_of_x_pow_a: h_of_γ_pow_α1,
+            com: com
+        };
+
+        let proof = DiseNizkProof::prove(&key, &stmt);
+        return (stmt, proof);
+    }
+
+    pub fn encrypt_client(server_responses: &Vec<(DiseNizkStatement, DiseNizkProof)>) {
+        for (stmt, proof) in server_responses {
+            assert!(DiseNizkProof::verify(stmt, proof));
+        }
+    }
+
+}
+
+#[cfg(test)]
+pub mod tests {
+    use super::*;
+    use rand::{thread_rng};
+
+    #[test]
+    fn test_correctness_enc_dec() {
+        let t = 3; let n = 5;
+        let (pp, keys) = Dise::setup(n, t);
+        let mut server_responses = vec![];
+        for i in 0..n {
+            let (stmt, proof) = Dise::encrypt_server(&pp, keys.get(i).unwrap());
+            server_responses.push((stmt, proof));
+        }
+        Dise::encrypt_client(&server_responses);
+    }
+
+    #[test]
+    fn test_correctness_nizk() {
+        let mut rng = thread_rng();
+
+        let α1 = Scalar::random(&mut rng);
+        let α2 = Scalar::random(&mut rng);
+        let witness = DiseNizkWitness { α1, α2 };
+
+        let pp = DiseNizkProofParams::new();
+        let h_of_x = utils::hash_to_g1(&[0; 32]);
+        let h_of_x_pow_α1 = h_of_x.mul(&α1);
+        let com = utils::pedersen_commit_in_g1(&pp.g, &pp.h, &α1, &α2);
+        let stmt = DiseNizkStatement {
+            g: pp.g.clone(),
+            h: pp.h.clone(),
+            h_of_x: h_of_x,
+            h_of_x_pow_a: h_of_x_pow_α1,
+            com: com
+        };
+        let proof = DiseNizkProof::prove(&witness, &stmt);
+        let check = DiseNizkProof::verify(&stmt, &proof);
+        assert!(check);
+    }
+}

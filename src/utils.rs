@@ -94,6 +94,19 @@ pub fn multi_exp_g2_fast(bases: &[G2Projective], powers: &[Scalar]) -> G2Project
     G2Projective::sum_of_products(bases, powers)
 }
 
+// https://datatracker.ietf.org/doc/html/draft-irtf-cfrg-hash-to-curve-11#appendix-K.1
+const SCALAR_HASH_DOMAIN: &[u8] = b"QUUX-V01-CS02-with-expander";
+pub fn hash_to_scalar<M: AsRef<[u8]>>(msg: M) -> Scalar {
+    let mut output = vec![Scalar::zero()];
+
+    Scalar::hash_to_field::<ExpandMsgXmd<sha2::Sha256>>(
+        msg.as_ref(),
+        SCALAR_HASH_DOMAIN,
+        &mut output,
+    );
+    output[0]
+}
+
 pub const DOMAIN_G1: &[u8] = b"QUUX-V01-CS02-with-BLS12381G1_XMD:SHA-256_SSWU_RO_";
 pub fn hash_to_g1(msg: &[u8]) -> G1Projective {
     <G1Projective as HashToCurve<ExpandMsgXmd<sha2::Sha256>>>::hash_to_curve(msg, DOMAIN_G1)
@@ -118,6 +131,16 @@ pub fn commit_in_g1(generator: &G1Projective, value: &Scalar) -> G1Projective {
 
 pub fn commit_in_g2(generator: &G2Projective, value: &Scalar) -> G2Projective {
     generator.mul(value)
+}
+
+//computes commitment g^a . h^b
+pub fn pedersen_commit_in_g1(
+    g: &G1Projective, h: &G1Projective, 
+    a: &Scalar, b: &Scalar
+) -> G1Projective {
+    let l = g.mul(a);
+    let r = h.mul(b);
+    l.add(r)
 }
 
 pub fn convert_gt_to_256_bit_hash(point: &Gt) -> [u8; 32] {
