@@ -76,6 +76,16 @@ pub fn multi_exp_g1(bases: &[G1Projective], powers: &[Scalar]) -> G1Projective {
     powered.iter().fold(G1Projective::identity(), |s, a| s.add(a))
 }
 
+pub fn multi_exp_gt(bases: &[Gt], powers: &[Scalar]) -> Gt {
+    assert!(bases.len() == powers.len());
+    let powered : Vec<Gt> = bases
+        .iter()
+        .zip(powers.iter())
+        .map(|(x,y)| x.mul(y))
+        .collect();
+    powered.iter().fold(Gt::identity(), |s, a| s.add(a))
+}
+
 pub fn multi_exp_g1_fast(bases: &[G1Projective], powers: &[Scalar]) -> G1Projective {
     G1Projective::sum_of_products(bases, powers)
 }
@@ -138,6 +148,16 @@ pub fn pedersen_commit_in_g1(
     g: &G1Projective, h: &G1Projective, 
     a: &Scalar, b: &Scalar
 ) -> G1Projective {
+    let l = g.mul(a);
+    let r = h.mul(b);
+    l.add(r)
+}
+
+//computes commitment g^a . h^b
+pub fn pedersen_commit_in_gt(
+    g: &Gt, h: &Gt, 
+    a: &Scalar, b: &Scalar
+) -> Gt {
     let l = g.mul(a);
     let r = h.mul(b);
     l.add(r)

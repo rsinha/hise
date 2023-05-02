@@ -14,6 +14,7 @@ use crate::universe::*;
 use crate::common::sig_utils;
 use crate::{XCoord, UniverseId, PartyId, Weight, PartyPublicKey, AddressBook};
 
+type DiseWitnessCommitment = G1Projective;
 
 pub struct DiseNizkProof {
     pub ut1: G1Projective,
@@ -115,7 +116,7 @@ pub struct Dise { }
 
 impl Dise {
     pub fn setup(n: usize, t: usize) -> 
-    (DiseNizkProofParams, Vec<DiseNizkWitness>) {
+    (DiseNizkProofParams, Vec<DiseNizkWitness>, Vec<DiseWitnessCommitment>) {
         let mut rng = rand::thread_rng();
 
         let pp = DiseNizkProofParams::new();
@@ -124,6 +125,8 @@ impl Dise {
         let p2 = sig_utils::sample_random_poly(&mut rng, t - 1);
 
         let mut private_keys = vec![];
+        let mut commitments = vec![];
+
         for i in 1..=n {
             let x = Scalar::from(i as u64);
             let α1_i = p1.eval(&x);
@@ -134,8 +137,12 @@ impl Dise {
                 α2: p2.eval(&x)
             };
             private_keys.push(witness);
+
+            let com = utils::pedersen_commit_in_g1(
+                &pp.g, &pp.h, &α1_i, &α2_i);
+            commitments.push(com);
         }
-        (pp, private_keys)
+        (pp, private_keys, commitments)
     }
 
     fn get_random_data_commitment() -> [u8; 32] {
@@ -148,18 +155,19 @@ impl Dise {
 
     pub fn encrypt_server(
         pp: &DiseNizkProofParams, 
-        key: &DiseNizkWitness) -> (DiseNizkStatement, DiseNizkProof) {
+        key: &DiseNizkWitness,
+        com: &DiseWitnessCommitment,
+    ) -> (DiseNizkStatement, DiseNizkProof) {
 
         let γ = Dise::get_random_data_commitment();
         let h_of_γ = utils::hash_to_g1(&γ);
         let h_of_γ_pow_α1 = h_of_γ.mul(key.α1);
-        let com = utils::pedersen_commit_in_g1(&pp.g, &pp.h, &key.α1, &key.α2);
         let stmt = DiseNizkStatement {
             g: pp.g.clone(),
             h: pp.h.clone(),
             h_of_x: h_of_γ,
             h_of_x_pow_a: h_of_γ_pow_α1,
-            com: com
+            com: com.clone()
         };
 
         let proof = DiseNizkProof::prove(&key, &stmt);
@@ -200,13 +208,13 @@ pub mod tests {
     #[test]
     fn test_performance() {
         let t = 5; let n = 5; //number of nodes
-        let m = 50; // number of messages
+        let m = 100; // number of messages
 
-        let (pp, keys) = Dise::setup(n, t);
+        let (pp, keys, coms) = Dise::setup(n, t);
 
         let mut server_responses = vec![];
         for i in 0..n {
-            let (stmt, proof) = Dise::encrypt_server(&pp, keys.get(i).unwrap());
+            let (stmt, proof) = Dise::encrypt_server(&pp, &keys[i], &coms[i]);
             server_responses.push((stmt, proof));
         }
 
@@ -214,7 +222,7 @@ pub mod tests {
 
         for i in 0..m {
             //since servers operate in parallel, we include the time to execute 1 server
-            let _ = Dise::encrypt_server(&pp, &keys[0]);
+            let _ = Dise::encrypt_server(&pp, &keys[0], &coms[0]);
             //client must process all servers responses
             Dise::encrypt_client(&server_responses);
         }
@@ -227,22 +235,13 @@ pub mod tests {
     #[test]
     fn test_correctness_enc_dec() {
         let t = 50; let n = 50;
-        let (pp, keys) = Dise::setup(n, t);
+        let (pp, keys, coms) = Dise::setup(n, t);
         let mut server_responses = vec![];
         for i in 0..n {
-            let (stmt, proof) = Dise::encrypt_server(&pp, keys.get(i).unwrap());
+            let (stmt, proof) = Dise::encrypt_server(&pp, &keys[i], &coms[i]);
             server_responses.push((stmt, proof));
         }
         Dise::encrypt_client(&server_responses);
-        /*
-                    let now = Instant::now();
-            let (state, msg) = publish_universe_setup_msg(&universe);
-            setup_state = state;
-            setup_msgs.push(msg);
-            let duration = now.elapsed();
-            println!("publish_universe_setup_msg time for {} nodes and {} weight: {}.{}",
-                num_parties, individual_weight, duration.as_secs(), duration.as_millis());
-         */
     }
 
     #[test]
