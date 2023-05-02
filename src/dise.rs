@@ -167,9 +167,26 @@ impl Dise {
     }
 
     pub fn encrypt_client(server_responses: &Vec<(DiseNizkStatement, DiseNizkProof)>) {
+        //first verify all the proofs
         for (stmt, proof) in server_responses {
             assert!(DiseNizkProof::verify(stmt, proof));
         }
+
+        //now compute the lagrange coefficients
+        let n = server_responses.len();
+        let all_xs: Vec<Scalar> = (1..=n)
+            .into_iter()
+            .map(|x| Scalar::from(x as u64))
+            .collect();
+        let coeffs: Vec<Scalar> = Polynomial::lagrange_coefficients(all_xs.as_slice());
+
+        //compute the interpolated DPRF evaluation
+        let solo_evals: Vec<G1Projective> = server_responses.
+            iter().
+            map(|(s,p)| s.h_of_x_pow_a.clone()).
+            collect();
+
+        let _ = utils::multi_exp_g1(solo_evals.as_slice(), &coeffs.as_slice()[0..n]);
     }
 
 }
@@ -178,10 +195,38 @@ impl Dise {
 pub mod tests {
     use super::*;
     use rand::{thread_rng};
+    use std::time::{Instant};
+
+    #[test]
+    fn test_performance() {
+        let t = 5; let n = 5; //number of nodes
+        let m = 50; // number of messages
+
+        let (pp, keys) = Dise::setup(n, t);
+
+        let mut server_responses = vec![];
+        for i in 0..n {
+            let (stmt, proof) = Dise::encrypt_server(&pp, keys.get(i).unwrap());
+            server_responses.push((stmt, proof));
+        }
+
+        let now = Instant::now();
+
+        for i in 0..m {
+            //since servers operate in parallel, we include the time to execute 1 server
+            let _ = Dise::encrypt_server(&pp, &keys[0]);
+            //client must process all servers responses
+            Dise::encrypt_client(&server_responses);
+        }
+
+        let duration = now.elapsed();
+        println!("DiSE encrypt for {} nodes and {} messages: {} s {} ms",
+                t, m, duration.as_secs(), duration.as_millis());
+    }
 
     #[test]
     fn test_correctness_enc_dec() {
-        let t = 3; let n = 5;
+        let t = 50; let n = 50;
         let (pp, keys) = Dise::setup(n, t);
         let mut server_responses = vec![];
         for i in 0..n {
@@ -189,6 +234,15 @@ pub mod tests {
             server_responses.push((stmt, proof));
         }
         Dise::encrypt_client(&server_responses);
+        /*
+                    let now = Instant::now();
+            let (state, msg) = publish_universe_setup_msg(&universe);
+            setup_state = state;
+            setup_msgs.push(msg);
+            let duration = now.elapsed();
+            println!("publish_universe_setup_msg time for {} nodes and {} weight: {}.{}",
+                num_parties, individual_weight, duration.as_secs(), duration.as_millis());
+         */
     }
 
     #[test]
