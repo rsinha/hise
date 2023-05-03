@@ -10,9 +10,6 @@ use std::ops::{Add, Mul, Neg};
 
 use crate::polynomial::*;
 use crate::utils;
-use crate::universe::*;
-use crate::common::sig_utils;
-use crate::{XCoord, UniverseId, PartyId, Weight, PartyPublicKey, AddressBook};
 
 type DiseWitnessCommitment = G1Projective;
 
@@ -121,8 +118,8 @@ impl Dise {
 
         let pp = DiseNizkProofParams::new();
 
-        let p1 = sig_utils::sample_random_poly(&mut rng, t - 1);
-        let p2 = sig_utils::sample_random_poly(&mut rng, t - 1);
+        let p1 = utils::sample_random_poly(&mut rng, t - 1);
+        let p2 = utils::sample_random_poly(&mut rng, t - 1);
 
         let mut private_keys = vec![];
         let mut commitments = vec![];

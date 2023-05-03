@@ -2,7 +2,11 @@ use pairing::group::ff::PrimeField;
 use std::ops::*;
 use bls12_381::*;
 use bls12_381::hash_to_curve::*;
+use bls12_381::{Scalar};
 use sha2::{Sha256, Digest};
+use crate::polynomial::*;
+use rand::{Rng, rngs::ThreadRng};
+use ff::Field;
 
 // fast 64-bit log
 // copypasta from https://stackoverflow.com/questions/11376288/fast-computing-of-log2-for-64-bit-integers
@@ -30,6 +34,20 @@ pub fn log2_ceil(x: u64) -> u64 {
     } else {
         n + 1
     }
+}
+
+pub fn sample_random_poly(
+    rng: &mut ThreadRng,
+    degree: usize) -> Polynomial {
+    //rust ranges are bounded inclusively below and exclusively above
+    let xs: Vec<Scalar> = (0..(degree+1)).map(|x| Scalar::from(x as u64)).collect();
+    let ys: Vec<Scalar> = xs
+        .iter()
+        .enumerate()
+        .map(|(_,_)| Scalar::random(&mut *rng))
+        .collect();
+
+    Polynomial::lagrange_interpolation(&xs[..], &ys[..])
 }
 
 pub fn pad_to_power_of_two<S: PrimeField>(xs: &[S]) -> Vec<S> {
@@ -148,6 +166,16 @@ pub fn pedersen_commit_in_g1(
     g: &G1Projective, h: &G1Projective, 
     a: &Scalar, b: &Scalar
 ) -> G1Projective {
+    let l = g.mul(a);
+    let r = h.mul(b);
+    l.add(r)
+}
+
+//computes commitment g^a . h^b
+pub fn pedersen_commit_in_g2(
+    g: &G2Projective, h: &G2Projective, 
+    a: &Scalar, b: &Scalar
+) -> G2Projective {
     let l = g.mul(a);
     let r = h.mul(b);
     l.add(r)

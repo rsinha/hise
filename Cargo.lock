@@ -452,6 +452,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "hise"
+version = "0.0.1"
+dependencies = [
+ "aes",
+ "bincode",
+ "bls12_381",
+ "criterion",
+ "ff",
+ "itertools",
+ "lazy_static",
+ "pairing",
+ "pprof",
+ "rand",
+ "rand_seeder",
+ "serde",
+ "sha2",
+ "thiserror",
+]
+
+[[package]]
 name = "indexmap"
 version = "1.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -589,26 +609,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6f5c75688da582b8ffc1f1799e9db273f32133c49e048f614d22ec3256773ccc"
 dependencies = [
  "adler",
-]
-
-[[package]]
-name = "multiverse-signatures"
-version = "0.0.1"
-dependencies = [
- "aes",
- "bincode",
- "bls12_381",
- "criterion",
- "ff",
- "itertools",
- "lazy_static",
- "pairing",
- "pprof",
- "rand",
- "rand_seeder",
- "serde",
- "sha2",
- "thiserror",
 ]
 
 [[package]]

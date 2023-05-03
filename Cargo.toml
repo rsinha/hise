@@ -36,9 +36,5 @@ criterion = { version = "0.3.4", features = ["html_reports"] }
 pprof = { version = "0.6", features = ["flamegraph"] }
 bincode = "1.3.3"
 
-[[bench]]
-name = "bench_multiverse_sig"
-harness = false
-
 [profile.test]
 opt-level = 3
