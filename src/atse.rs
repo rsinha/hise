@@ -345,24 +345,158 @@ pub mod tests {
     use std::time::{Instant};
 
     #[test]
-    fn test_enc_performance() {
-        let t = 4; let n = 4; //number of nodes
-        let m = 10000; // number of messages
+    fn test_enc_latency() {
+        // n = 6,12,18.24
+        let rows = [[2,4,6,8], [3,6,9,12], [4,8,12,16]];
+        for row in rows.iter() {
+            for t in row.iter() {
+                let t = *t as usize; let n = t;
 
-        let (pp, keys, coms) = Atse::setup(n, t);
+                let mut measurements = vec![];
+                for m in [1, 100, 10000].iter() {
+                    let m = *m as usize;
 
-        let mut server_responses = vec![];
-        for i in 0..n {
-            let (stmt, proof) = Atse::encrypt_server(&pp, &keys[i], &coms[i]);
-            server_responses.push((stmt, proof));
+                    let (pp, keys, coms) = Atse::setup(n, t);
+
+                    let mut server_responses = vec![];
+                    for i in 0..n {
+                        let (stmt, proof) = Atse::encrypt_server(&pp, &keys[i], &coms[i]);
+                        server_responses.push((stmt, proof));
+                    }
+            
+                    let now = Instant::now();
+                    let _ = Atse::encrypt_server(&pp, &keys[0], &coms[0]);
+                    Atse::encrypt_client(m, &server_responses);
+                    let duration = now.elapsed();
+                    println!("ATSE encrypt for {} nodes and {} messages: {} seconds",
+                            t, m, duration.as_secs_f32());
+                            measurements.push(duration.as_secs_f32());
+                }
+                print!("t = {}: ", t);
+                for latency in measurements.iter() {
+                    print!("{:.3} & ", latency);
+                }
+                print!("\n");
+            }
         }
+    }
 
-        let now = Instant::now();
-        let _ = Atse::encrypt_server(&pp, &keys[0], &coms[0]);
-        Atse::encrypt_client(m, &server_responses);
-        let duration = now.elapsed();
-        println!("DiSE encrypt for {} nodes and {} messages: {} s {} ms {}",
-                t, m, duration.as_secs(), duration.as_millis(), duration.as_secs_f32());
+    #[test]
+    fn test_dec_latency() {
+        // n = 6,12,18.24
+        let rows = [[2,4,6,8], [3,6,9,12], [4,8,12,16]];
+        for row in rows.iter() {
+            for t in row.iter() {
+                let t = *t as usize; let n = t;
+
+                let mut measurements = vec![];
+                for m in [1, 100].iter() {
+                    let m = *m as usize;
+
+                    let (pp, keys, coms) = Atse::setup(n, t);
+
+                    let mut server_responses = vec![];
+                    for i in 0..n {
+                        let (stmt, proof) = Atse::decrypt_server(&pp, &keys[i], &coms[i]);
+                        server_responses.push((stmt, proof));
+                    }
+            
+                    let now = Instant::now();
+
+                    for i in 0..m {
+                        let _ = Atse::decrypt_server(&pp, &keys[0], &coms[0]);
+                        Atse::decrypt_client(&server_responses);
+                    }
+
+                    let duration = now.elapsed();
+                    println!("ATSE decrypt for {} nodes and {} messages: {} seconds",
+                            t, m, duration.as_secs_f32());
+                            measurements.push(duration.as_secs_f32());
+                }
+                print!("t = {}: ", t);
+                for latency in measurements.iter() {
+                    print!("{:.5} & ", latency);
+                }
+                print!("\n");
+            }
+        }
+    }
+
+    #[test]
+    fn test_dec_throughput() {
+        let num_cpu = 16;
+        let rows = [[2,2,6,8], [3,6,9,12], [4,8,12,16]];
+        for row in rows.iter() {
+            for t in row.iter() {
+                let t = *t as usize; let n = t;
+
+                let mut measurements = vec![];
+                for m in [1, 1, 10000].iter() {
+                    let m = *m as usize;
+
+                    let (pp, keys, coms) = Atse::setup(n, t);
+
+                    let mut server_responses = vec![];
+                    for i in 0..n {
+                        let (stmt, proof) = Atse::decrypt_server(&pp, &keys[i], &coms[i]);
+                        server_responses.push((stmt, proof));
+                    }
+            
+                    let now = Instant::now();
+                    for i in 0..m {
+                        Atse::decrypt_client(&server_responses);
+                    }
+                    let duration = now.elapsed().as_secs_f32();
+                    let throughput = (num_cpu as f32) * ((m as f32) / duration);
+                    println!("ATSE throughput for {} nodes and {} messages: {} seconds; {} enc/sec",
+                            t, m, duration, throughput);
+                    measurements.push(throughput);
+                }
+                print!("t = {}: ", t);
+                for throughput in measurements.iter() {
+                    print!("{:.3} & ", throughput);
+                }
+                print!("\n");
+            }
+        }
+    }
+
+
+    #[test]
+    fn test_enc_throughput() {
+        let num_cpu = 16;
+        let rows = [[2,4,6,8], [3,6,9,12], [4,8,12,16]];
+        for row in rows.iter() {
+            for t in row.iter() {
+                let t = *t as usize; let n = t;
+
+                let mut measurements = vec![];
+                for m in [1, 100, 10000].iter() {
+                    let m = *m as usize;
+
+                    let (pp, keys, coms) = Atse::setup(n, t);
+
+                    let mut server_responses = vec![];
+                    for i in 0..n {
+                        let (stmt, proof) = Atse::encrypt_server(&pp, &keys[i], &coms[i]);
+                        server_responses.push((stmt, proof));
+                    }
+            
+                    let now = Instant::now();
+                    Atse::encrypt_client(m, &server_responses);
+                    let duration = now.elapsed().as_secs_f32();
+                    let throughput = (num_cpu as f32) * ((m as f32) / duration);
+                    println!("ATSE throughput for {} nodes and {} messages: {} seconds; {} enc/sec",
+                            t, m, duration, throughput);
+                    measurements.push(throughput);
+                }
+                print!("t = {}: ", t);
+                for throughput in measurements.iter() {
+                    print!("{:.3} & ", throughput);
+                }
+                print!("\n");
+            }
+        }
     }
 
     #[test]
