@@ -246,12 +246,11 @@ impl Hise {
     pub fn encrypt_server(
         pp: &HiseNizkProofParams, 
         key: &HiseNizkWitness,
-        com: &HiseWitnessCommitment
+        com: &HiseWitnessCommitment,
+        γ: [u8;32] //merkle root
     ) -> (HiseEncNizkStatement, HiseEncNizkProof) {
-        // γ should come from the client, 
-        // but it doesnt matter for perf testing 
-        let γ = Hise::get_random_data_commitment();
-        let h_of_γ = utils::hash_to_g1(&γ);
+    
+        let h_of_γ = utils::hash_to_g1(&γ);   //γ comes from the client
         let h_of_γ_pow_α1 = h_of_γ.mul(key.α1);
         let stmt = HiseEncNizkStatement {
             g: pp.g.clone(),
@@ -268,14 +267,13 @@ impl Hise {
     pub fn decrypt_server(
         pp: &HiseNizkProofParams, 
         key: &HiseNizkWitness,
-        com: &HiseWitnessCommitment
+        com: &HiseWitnessCommitment,
+        x_eps: [u8;32],
+        x_w: [u8;32]
     ) -> (HiseDecNizkStatement, HiseDecNizkProof) {
-        // γ and q should come from the client, 
-        // but it doesnt matter for perf testing 
-        let x_eps = Hise::get_random_data_commitment();
-        let x_w = Hise::get_random_data_commitment();
-
-        let h_of_x_eps = utils::hash_to_g1(&x_eps);
+       
+        // x_eps and x_w come from the client
+        let h_of_x_eps = utils::hash_to_g1(&x_eps); 
         let h_of_x_w = utils::hash_to_g1(&x_w);
 
         let eval = h_of_x_eps.mul(key.α1).add(h_of_x_w.mul(key.β1));
@@ -294,7 +292,18 @@ impl Hise {
         return (stmt, proof);
     }
 
-    pub fn encrypt_client(
+    //Phase 1 of encryption: Client sends a merkle data commitment to the servers.
+    //For simplicity a random commitment is taken.
+    
+    pub fn encrypt_client_phase_1() -> [u8;32] {
+        let mut γ = Hise::get_random_data_commitment();
+        return γ;
+    }
+
+    //Phase 2 of encryption: Client receives the partial evlatuations from the servers.
+    //These evaluations are aggregated to eventually generate message specific keys and ultimately the ciphertexts.
+
+    pub fn encrypt_client_phase_2(
         m: usize, //number of messages
         server_responses: &Vec<(HiseEncNizkStatement, HiseEncNizkProof)>) {
         //first verify all the proofs
@@ -326,20 +335,30 @@ impl Hise {
         let mut rng = thread_rng();
         let g2 = G2Projective::generator();
         for i in 0..m {
-            let r_j = Scalar::random(&mut rng);
-            let g1_pow_r_j = g2.mul(&r_j);
+            let r_i = Scalar::random(&mut rng);
+            let g1_pow_r_i = g2.mul(&r_i);
             
             for j in 0..log_m {
-                let x_w_j = Hise::get_random_data_commitment();
+                let x_w_j = Hise::get_random_data_commitment(); 
                 let h_of_x_w_j = utils::hash_to_g1(x_w_j.as_slice());
-                let h_of_x_w_j_pow_r_j = h_of_x_w_j.mul(&r_j);
+                let h_of_x_w_j_pow_r_i = h_of_x_w_j.mul(&r_i);
             }
 
-            let mk_j = pairing(&gk.to_affine(), &g1_pow_r_j.to_affine());
+            let mk_j = pairing(&gk.to_affine(), &g1_pow_r_i.to_affine());
         }
     }
 
-    pub fn decrypt_client(
+    //Phase 1 of decryption: Client sends the values x_eps and x_w to the servers
+    // The values x_eps and x_w correspond to hash values at the root and at the node with path w.
+    //For simplicity random commitments are taken.
+
+    pub fn decrypt_client_phase_1() -> ([u8;32], [u8;32]){
+        let x_eps = Hise::get_random_data_commitment();
+        let x_w = Hise::get_random_data_commitment();
+        return (x_eps, x_w);
+    }
+
+    pub fn decrypt_client_phase_2(
         m: usize, //number of messages
         server_responses: &Vec<(HiseDecNizkStatement, HiseDecNizkProof)>) {
         //first verify all the proofs
@@ -393,6 +412,8 @@ pub mod tests {
                 let t = *t as usize; let n = t;
 
                 let mut durations = vec![];
+                let mut γ = Hise::encrypt_client_phase_1();
+
                 for m in [1, 100, 10000].iter() {
                     let m = *m as usize;
 
@@ -400,13 +421,13 @@ pub mod tests {
 
                     let mut server_responses = vec![];
                     for i in 0..n {
-                        let (stmt, proof) = Hise::encrypt_server(&pp, &keys[i], &coms[i]);
+                        let (stmt, proof) = Hise::encrypt_server(&pp, &keys[i], &coms[i], γ);
                         server_responses.push((stmt, proof));
                     }
             
                     let now = Instant::now();
-                    let _ = Hise::encrypt_server(&pp, &keys[0], &coms[0]);
-                    Hise::encrypt_client(m, &server_responses);
+                    let _ = Hise::encrypt_server(&pp, &keys[0], &coms[0], γ);
+                    Hise::encrypt_client_phase_2(m, &server_responses);
                     let duration = now.elapsed();
                     println!("ATSE encrypt for {} nodes and {} messages: {} seconds",
                             t, m, duration.as_secs_f32());
@@ -437,14 +458,16 @@ pub mod tests {
                     let (pp, keys, coms) = Hise::setup(n, t);
 
                     let mut server_responses = vec![];
+                    let (mut x_eps, mut x_w) = Hise::decrypt_client_phase_1();
+
                     for i in 0..n {
-                        let (stmt, proof) = Hise::decrypt_server(&pp, &keys[i], &coms[i]);
+                        let (stmt, proof) = Hise::decrypt_server(&pp, &keys[i], &coms[i], x_eps, x_w);
                         server_responses.push((stmt, proof));
                     }
             
                     let now = Instant::now();
-                    let _ = Hise::decrypt_server(&pp, &keys[0], &coms[0]);
-                    Hise::decrypt_client(m, &server_responses);
+                    let _ = Hise::decrypt_server(&pp, &keys[0], &coms[0], x_eps, x_w);
+                    Hise::decrypt_client_phase_2(m, &server_responses);
                     let duration = now.elapsed();
                     println!("HiSE decrypt for {} nodes and {} messages: {} seconds",
                             t, m, duration.as_secs_f32());
@@ -474,13 +497,15 @@ pub mod tests {
                     let (pp, keys, coms) = Hise::setup(n, t);
 
                     let mut server_responses = vec![];
+                    let mut γ = Hise::encrypt_client_phase_1();
+
                     for i in 0..n {
-                        let (stmt, proof) = Hise::encrypt_server(&pp, &keys[i], &coms[i]);
+                        let (stmt, proof) = Hise::encrypt_server(&pp, &keys[i], &coms[i], γ);
                         server_responses.push((stmt, proof));
                     }
             
                     let now = Instant::now();
-                    Hise::encrypt_client(m, &server_responses);
+                    Hise::encrypt_client_phase_2(m, &server_responses);
                     let duration = now.elapsed().as_secs_f32();
                     let throughput = (num_cpu as f32) * ((m as f32) / duration);
                     println!("HISE throughput for {} nodes and {} messages: {} seconds; {} enc/sec",
@@ -511,13 +536,15 @@ pub mod tests {
                     let (pp, keys, coms) = Hise::setup(n, t);
 
                     let mut server_responses = vec![];
+                    let (mut x_eps, mut x_w) = Hise::decrypt_client_phase_1();
+
                     for i in 0..n {
-                        let (stmt, proof) = Hise::decrypt_server(&pp, &keys[i], &coms[i]);
+                        let (stmt, proof) = Hise::decrypt_server(&pp, &keys[i], &coms[i], x_eps, x_w);
                         server_responses.push((stmt, proof));
                     }
             
                     let now = Instant::now();
-                    Hise::decrypt_client(m, &server_responses);
+                    Hise::decrypt_client_phase_2(m, &server_responses);
                     let duration = now.elapsed().as_secs_f32();
                     let throughput = (num_cpu as f32) * ((m as f32) / duration);
                     println!("HISE throughput for {} nodes and {} messages: {} seconds; {} enc/sec",
